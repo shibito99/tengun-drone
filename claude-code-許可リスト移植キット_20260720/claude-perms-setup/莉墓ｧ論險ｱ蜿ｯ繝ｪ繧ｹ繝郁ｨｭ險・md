@@ -1,0 +1,153 @@
+# 仕様書＋実装計画：settings.json 許可リスト設計
+
+作成 2026-07-20 ／ 対象＝Claude Code 権限確認（「実行してもいいですか?」）を9割削減
+
+---
+
+## 0. 現状診断（実測）
+
+- `~/.claude/settings.local.json` の `allow` = **1594件**、`deny` = **0件**、`defaultMode` = 未設定（＝`default`）
+- allow の内訳：`log.sh` のログ文言ごとの全文一致が **640件**（最大の発生源）、以下 cp49/rm49/echo48/awk46/ls39/ln39…
+- **根本原因**：許可ルールが「全文一致」で具体的すぎる。次の似た操作にマッチせず、毎回新ルールが増える → 確認が減らない構造。
+
+**方針**：1594件の個別ルールを「前方一致プレフィックス」約40件に畳む＋deny（秘密保護）を新設＋`defaultMode: acceptEdits`。
+
+---
+
+## 1. 正確な構文（公式ドキュメント確認済み）
+
+- 配列は3つ：`allow`（無確認実行）／`ask`（必ず確認・allowより優先）／`deny`（遮断・最優先・bypassでも効く）
+- **優先順位**：deny > ask > allow > モード既定
+- **Bashワイルドカードはスペース+`*`**：`Bash(npm run test *)` が正。`:*`（コロン）は不可。
+  - `Bash(cmd *)` = 「`cmd ` の後に何が続いてもOK」／`Bash(cmd)` = 完全一致のみ
+  - 注意：`&&`・`|` で繋いだ複合コマンドは1つの文字列として扱われ、プレフィックスにマッチしない（個別に確認が出る）
+- **パス系**：`Read(./.env)` 完全一致／`Read(./.env.*)` glob／`Read(./secrets/**)` 再帰。`~`=ホーム、絶対パス可。
+- **保護パス**（allowでも無確認にできない）：`.git/**` `.claude/**` `.zshrc` `.npmrc` `.mcp.json` 等 → 編集時は必ず確認が残る（安全側）
+- **defaultMode**：`default`（毎回確認）／`acceptEdits`（ファイル編集＋作業ディレクトリ内の安全Bashを自動承認）／`plan`／`bypassPermissions`
+- **設定の階層**（強→弱）：managed > コマンドライン > `.claude/settings.local.json`（個人・非共有）> `.claude/settings.json`（チーム共有）> `~/.claude/settings.json`（ユーザー全体）。allow/ask/deny は**マージ**される。
+
+---
+
+## 2. 置き場所の決定
+
+画像は「プロジェクト直下 `.claude/settings.json`」を推すが、これはチームgit共有向け。
+**このユーザーは約30プロジェクトを個人で横断**するため、**ユーザー全体 `~/.claude/settings.json` に置くのが正**（1回書けば全PJに効く）。
+
+- 恒久ルール（allow/deny/defaultMode）→ `~/.claude/settings.json` に集約
+- 肥大化した `~/.claude/settings.local.json` の1594件 → 破棄（プレフィックスに畳まれるため不要）
+- **例外**：git共有のチームリポ `ihatov-labs/nico-os` は、その repo 直下 `.claude/settings.json` に別途プロジェクト固有ルールを置ける（今回スコープ外・任意）
+
+---
+
+## 3. allow 設計（1594件 → 約40プレフィックス）
+
+頻度分析に基づき、実作業で頻出のコマンドを前方一致に畳む。
+
+```
+# ── ログ／同期（最大の発生源をここで殲滅）──
+Bash(~/.claude/bin/log.sh *)
+Bash($HOME/.claude/bin/log.sh *)
+Bash(~/.claude/bin/pjlog.sh *)
+Bash(python3 *kb_archive_sync.py *)
+
+# ── 読み取り・調査系（安全）──
+Bash(ls *)   Bash(cat *)   Bash(grep *)   Bash(rg *)   Bash(find *)
+Bash(wc *)   Bash(head *)  Bash(tail *)   Bash(awk *)  Bash(echo *)
+Bash(which *) Bash(command *) Bash(file *) Bash([ *)
+
+# ── ファイル操作（※rm等はacceptEditsが作業ディレクトリ内で自動承認するため個別allow不要）──
+Bash(cp *)   Bash(mv *)   Bash(mkdir *)  Bash(ln *)   Bash(chmod *)
+Bash(sed *)  Bash(zip *)  Bash(unzip *)  Bash(textutil *)  Bash(sips *)
+
+# ── 開発・実行 ──
+Bash(python3 *)  Bash(.venv/bin/python *)  Bash(npm run *)  Bash(npm test *)
+Bash(sqlite3 *)  Bash(gh pr view *)  Bash(gh pr list *)  Bash(gh run *)
+
+# ── git（読み取り＋コミットまで。pushは確認を残す）──
+Bash(git status *) Bash(git diff *) Bash(git add *) Bash(git log *)
+Bash(git commit *) Bash(git branch *) Bash(git checkout *) Bash(git stash *)
+
+# ── クラウド（読み取り・同期系のみ）──
+Bash(gcloud storage *)  Bash(gsutil *)  Bash(railway logs *)  Bash(railway status *)  Bash(railway variables *)
+
+# ── Web／MCP（読み取り系）──
+WebSearch
+WebFetch(domain:code.claude.com)
+mcp__claude_ai_Gmail__search_threads
+mcp__claude_ai_Gmail__get_message
+mcp__claude_ai_Google_Drive__search_files
+mcp__claude_ai_Google_Drive__read_file_content
+mcp__claude_ai_Google_Calendar__list_events
+```
+
+**意図的にallowに入れないもの**（確認を残す＝安全）：`git push`、`gh pr merge`、`curl`（秘密送信リスク）、`rm`のblanket、Gmail送信/Drive作成/Calendar作成・削除。
+
+---
+
+## 4. deny 設計（現状0件 → 秘密・PII保護を新設）
+
+deny は最優先。ここが今の最大の穴。
+
+```
+# ── 秘密ファイルの読み取り遮断 ──
+Read(**/.env)
+Read(**/.env.*)
+Read(~/.ssh/**)
+Read(~/.claude/.credentials.json)
+Read(~/.claude/APIキー台帳.md)
+
+# ── PII（機密_人事）は読み書き両遮断 ──
+Read(**/機密_人事/**)
+Edit(**/機密_人事/**)
+
+# ── 破壊的・運用禁止コマンド ──
+Bash(railway up *)      # ユーザー運用ルールで禁止（二重デプロイ防止）を機械的に強制
+Bash(sudo *)
+Bash(rm -rf /*)
+```
+
+> 補足：`LINE連絡先マスター.md` はユーザーが日常参照する作業ファイルのため deny しない。真の秘密（鍵・認証情報・PII）のみ遮断。
+
+---
+
+## 5. defaultMode
+
+```json
+"permissions": { "defaultMode": "acceptEdits" }
+```
+
+ファイル編集＋作業ディレクトリ内の安全Bashを自動承認。未許可のBashだけ確認が残り、denyは常に遮断。安全性は保ったまま体感速度が変わる。
+
+---
+
+## 6. 最終形（`~/.claude/settings.json` に追加する permissions ブロック）
+
+既存の `model` / `hooks`(log_guard.sh) / `tui` / `theme` / `mcpServers` はそのまま維持し、`permissions` キーだけ追加する（§3〜§5を1つのオブジェクトに統合）。
+
+---
+
+## 7. 実装計画（手順）
+
+1. **バックアップ**：`settings.json` と `settings.local.json` を `.bak.20260720` にコピー（ローカル＋GCS両方／★最重要ルール）
+2. `~/.claude/settings.json` に `permissions`（allow §3 ＋ deny §4 ＋ defaultMode §5）を追加
+3. `~/.claude/settings.local.json` を最小化（1594件のallowを削除。個人固有で残したい数件があれば選別）
+4. **JSON妥当性チェック**：`python3 -m json.tool` で両ファイルを検証
+5. **動作確認**：新セッションで `/status`・`/permissions` を確認、log.sh実行が無確認で通るかテスト
+6. **同期＋ログ**：GCS `nico_archive/NICO/claude設定/` へ本仕様書とsettings群をupload、`log.sh` で1行記録
+7. **1週間運用**：新たに確認が出た操作をメモ→プレフィックスを追記（育てる運用）
+
+## 8. リスクと対策
+
+- **広すぎるallowの誤爆**：`python3 *`・`sed *` 等は強力。→ 秘密/PIIは §4 deny が最優先で遮断するため実害を抑制。
+- **acceptEditsの自動編集**：保護パス（`.claude/**`等）は自動承認対象外。作業ディレクトリ外はadditionalDirectories未指定なら確認が残る。
+- **railway up 禁止の徹底**：§4 deny で機械強制（運用ルール違反を物理的に防ぐ）。
+- **higgsfieldトークンが settings.json に平文**：今回のスコープ外だが、将来は環境変数化を推奨（別途）。
+```
+
+---
+
+## 9. 未確定（実装前に確認したい点）
+
+- allow/deny の置き場所：`~/.claude/settings.json`（推奨）で確定か
+- `settings.local.json` 1594件を全破棄でよいか（残したい個人固有ルールの有無）
+- deny 対象に含める/外すファイルの最終確認（特に LINE連絡先マスター）

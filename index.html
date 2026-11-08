@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>🌏 いまここボード</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: "Hiragino Kaku Gothic ProN", "Meiryo", sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      padding: 20px;
+    }
+
+    .container {
+      max-width: 640px;
+      margin: 0 auto;
+    }
+
+    h1 {
+      text-align: center;
+      color: #fff;
+      font-size: 2rem;
+      margin-bottom: 6px;
+      text-shadow: 0 2px 8px rgba(0,0,0,0.2);
+    }
+
+    .subtitle {
+      text-align: center;
+      color: rgba(255,255,255,0.8);
+      font-size: 0.9rem;
+      margin-bottom: 24px;
+    }
+
+    .card {
+      background: #fff;
+      border-radius: 16px;
+      padding: 20px;
+      margin-bottom: 16px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+    }
+
+    /* 入力エリア */
+    .input-area label {
+      display: block;
+      font-size: 0.8rem;
+      color: #666;
+      margin-bottom: 4px;
+      margin-top: 12px;
+    }
+
+    .input-area label:first-child {
+      margin-top: 0;
+    }
+
+    .input-area input,
+    .input-area textarea {
+      width: 100%;
+      border: 2px solid #e0e0e0;
+      border-radius: 10px;
+      padding: 10px 12px;
+      font-size: 1rem;
+      font-family: inherit;
+      transition: border-color 0.2s;
+      resize: none;
+    }
+
+    .input-area input:focus,
+    .input-area textarea:focus {
+      outline: none;
+      border-color: #667eea;
+    }
+
+    .input-area textarea {
+      height: 80px;
+    }
+
+    .send-btn {
+      display: block;
+      width: 100%;
+      margin-top: 14px;
+      padding: 12px;
+      background: linear-gradient(135deg, #667eea, #764ba2);
+      color: #fff;
+      border: none;
+      border-radius: 10px;
+      font-size: 1rem;
+      font-weight: bold;
+      cursor: pointer;
+      transition: opacity 0.2s, transform 0.1s;
+    }
+
+    .send-btn:hover {
+      opacity: 0.9;
+    }
+
+    .send-btn:active {
+      transform: scale(0.98);
+    }
+
+    /* リアクション */
+    .reactions {
+      display: flex;
+      gap: 12px;
+      justify-content: center;
+    }
+
+    .reaction-btn {
+      flex: 1;
+      padding: 10px 0;
+      background: #f5f5f5;
+      border: 2px solid #e0e0e0;
+      border-radius: 12px;
+      font-size: 1.4rem;
+      cursor: pointer;
+      transition: background 0.2s, transform 0.1s;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 2px;
+    }
+
+    .reaction-btn:hover {
+      background: #ede9fe;
+      border-color: #667eea;
+    }
+
+    .reaction-btn:active {
+      transform: scale(0.93);
+    }
+
+    .reaction-count {
+      font-size: 0.85rem;
+      color: #555;
+      font-weight: bold;
+    }
+
+    /* 投稿一覧 */
+    .section-title {
+      font-size: 0.85rem;
+      color: #888;
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #4ade80;
+      animation: pulse 1.5s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+
+    .message-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .message-item {
+      background: #f9f9f9;
+      border-radius: 10px;
+      padding: 12px 14px;
+      border-left: 4px solid #667eea;
+    }
+
+    .message-header {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 4px;
+    }
+
+    .message-name {
+      font-weight: bold;
+      color: #4a3f8f;
+      font-size: 0.9rem;
+    }
+
+    .message-time {
+      font-size: 0.75rem;
+      color: #aaa;
+    }
+
+    .message-text {
+      color: #333;
+      font-size: 0.95rem;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .empty-state {
+      text-align: center;
+      color: #bbb;
+      padding: 30px 0;
+      font-size: 0.9rem;
+    }
+
+    .error-notice {
+      display: none;
+      text-align: center;
+      color: #e74c3c;
+      font-size: 0.8rem;
+      margin-top: 8px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🌏 いまここボード</h1>
+    <p class="subtitle">いま、ここにいるよ！みんなでつながろう</p>
+
+    <!-- 入力カード -->
+    <div class="card input-area">
+      <label for="name-input">お名前（20文字まで）</label>
+      <input id="name-input" type="text" maxlength="20" placeholder="あなたの名前">
+
+      <label for="text-input">ひとこと（200文字まで）</label>
+      <textarea id="text-input" maxlength="200" placeholder="いまここで何してる？"></textarea>
+
+      <button class="send-btn" id="send-btn">✉️ 送信する</button>
+      <p class="error-notice" id="error-notice">接続できません（URL確認）</p>
+    </div>
+
+    <!-- リアクションカード -->
+    <div class="card">
+      <div class="reactions">
+        <button class="reaction-btn" id="btn-heart" data-type="heart">
+          ❤️
+          <span class="reaction-count" id="count-heart">0</span>
+        </button>
+        <button class="reaction-btn" id="btn-clap" data-type="clap">
+          👏
+          <span class="reaction-count" id="count-clap">0</span>
+        </button>
+        <button class="reaction-btn" id="btn-party" data-type="party">
+          🎉
+          <span class="reaction-count" id="count-party">0</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- 投稿一覧カード -->
+    <div class="card">
+      <p class="section-title">
+        <span class="status-dot"></span>
+        みんなのひとこと
+      </p>
+      <div class="message-list" id="message-list">
+        <div class="empty-state">まだ投稿がありません</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const SERVER = "https://imakoko-board-production.up.railway.app";
+
+    // ---- ここはSTEP1：まだ通信なし ----
+    console.log("STEP1完了：見た目だけ表示中。サーバー:", SERVER);
+  </script>
+</body>
+</html>
